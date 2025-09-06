@@ -57,30 +57,57 @@ jobs:
             -archivePath build/App.xcarchive \
             archive | tee xcodebuild.log
 
-      - name: Locate app inside archive (robust)
+      - name: Locate app bundle (search all locations)
         id: locate
         shell: bash
         run: |
           set -e
           APP_DIR=""
+
+          # 1) Our requested archive path
           if [ -d "build/App.xcarchive/Products/Applications" ]; then
             APP_DIR=$(find build/App.xcarchive/Products/Applications -maxdepth 1 -type d -name "*.app" -not -name "IDLE.app" | head -n1 || true)
           fi
-          if [ -z "$APP_DIR" ]; then
-            ARCH=$(find "$HOME/Library/Developer/Xcode/Archives" -type d -name "*.xcarchive" | head -n1 || true)
-            if [ -n "$ARCH" ] && [ -d "$ARCH/Products/Applications" ]; then
-              APP_DIR=$(find "$ARCH/Products/Applications" -maxdepth 1 -type d -name "*.app" -not -name "IDLE.app" | head -n1 || true)
-            fi
+
+          # 2) Xcode default Archives folder
+          if [ -z "$APP_DIR" ] && [ -d "$HOME/Library/Developer/Xcode/Archives" ]; then
+            APP_DIR=$(find "$HOME/Library/Developer/Xcode/Archives" -type d -path "*/Products/Applications/*.app" -not -name "IDLE.app" | head -n1 || true)
           fi
+
+          # 3) Release-iphoneos products (from raw builds)
           if [ -z "$APP_DIR" ]; then
-            echo "No .app found in archive locations."
+            APP_DIR=$(find build/Build/Products -type d -path "*/Release-iphoneos/*.app" -not -name "IDLE.app" | head -n1 || true)
+          fi
+
+          # 4) Global DerivedData
+          if [ -z "$APP_DIR" ] && [ -d "$HOME/Library/Developer/Xcode/DerivedData" ]; then
+            APP_DIR=$(find "$HOME/Library/Developer/Xcode/DerivedData" -type d -path "*/Build/Products/Release-iphoneos/*.app" -not -name "IDLE.app" | head -n1 || true)
+          fi
+
+          # 5) Last resort: anywhere
+          if [ -z "$APP_DIR" ]; then
+            APP_DIR=$(find . -type d -name "*.app" -not -name "IDLE.app" | head -n1 || true)
+          fi
+
+          if [ -z "$APP_DIR" ]; then
+            echo "No .app found."
+            echo "Debug listing:"
+            find build -type d -name "*.app" -print || true
+            if [ -d "$HOME/Library/Developer/Xcode/DerivedData" ]; then
+              find "$HOME/Library/Developer/Xcode/DerivedData" -type d -path "*/Build/Products/Release-iphoneos/*.app" -print || true
+            fi
+            if [ -d "$HOME/Library/Developer/Xcode/Archives" ]; then
+              find "$HOME/Library/Developer/Xcode/Archives" -type d -path "*/Products/Applications/*.app" -print || true
+            fi
             exit 1
           fi
+
           if [ ! -f "$APP_DIR/Info.plist" ]; then
-            echo "Missing Info.plist in $APP_DIR"
+            echo "Found .app but Info.plist is missing: $APP_DIR"
             ls -la "$APP_DIR"
             exit 1
           fi
+
           echo "app_dir=$APP_DIR" >> "$GITHUB_OUTPUT"
           echo "$APP_DIR" > app_dir.txt
 
